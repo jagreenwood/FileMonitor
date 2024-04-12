@@ -12,15 +12,14 @@ public final class MacosWatcher: WatcherProtocol {
     let fileWatcher: FileWatcher
     private var lastFiles: [URL] = []
 
-    required public init(directory: URL) throws {
-
-        fileWatcher = FileWatcher([directory.path])
+    public init(paths: [URL]) throws {
+        fileWatcher = FileWatcher(paths.map(\.path))
         fileWatcher.queue = DispatchQueue.global()
-        lastFiles = try getCurrentFiles(in: directory)
+        lastFiles = try Self.getCurrentFiles(in: paths)
 
         fileWatcher.callback = { [self] event throws in
             if let url = URL(string: event.path), url.isDirectory == false {
-                let currentFiles = try getCurrentFiles(in: directory)
+                let currentFiles = try Self.getCurrentFiles(in: paths)
 
                 let removedFiles = getDifferencesInFiles(lhs: lastFiles, rhs: currentFiles)
                 let addedFiles = getDifferencesInFiles(lhs: currentFiles, rhs: lastFiles)
@@ -43,6 +42,10 @@ public final class MacosWatcher: WatcherProtocol {
                 lastFiles = currentFiles
             }
         }
+    }
+
+    convenience public init(directory: URL) throws {
+        try self.init(paths: [directory])
     }
 
     deinit {

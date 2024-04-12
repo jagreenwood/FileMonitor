@@ -18,11 +18,28 @@ public protocol WatcherProtocol {
 }
 
 public extension WatcherProtocol {
+    @available(*, deprecated, message: "user static WatcherProtocol.getCurrentFiles(in:)")
     func getCurrentFiles(in directory: URL) throws -> [URL] {
-        try FileManager.default.contentsOfDirectory(
-                at: directory,
-                includingPropertiesForKeys: [.creationDateKey, .typeIdentifierKey],
-                options: [.skipsHiddenFiles]
+        try Self.contentsOfDirectory(directory)
+    }
+
+    static func getCurrentFiles(in urls: [URL]) throws -> [URL] {
+        try urls.reduce(into: []) { current, next in
+            if next.isDirectory {
+                try current.append(contentsOf: Self.contentsOfDirectory(next))
+            } else {
+                current.append(next)
+            }
+        }
+    }
+
+    static func contentsOfDirectory(_ url: URL) throws -> [URL] {
+        precondition(url.isDirectory, "Logic error: \(url) is not a directory.")
+
+        return try FileManager.default.contentsOfDirectory(
+            at: url,
+            includingPropertiesForKeys: [.creationDateKey, .typeIdentifierKey],
+            options: [.skipsHiddenFiles]
         )
     }
 
