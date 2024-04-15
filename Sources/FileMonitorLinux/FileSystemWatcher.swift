@@ -12,7 +12,7 @@ class FileSystemWatcher {
     private let dispatchQueue: DispatchQueue
     private let fileDescriptor: Int32
     private let lock = NSLock()
-    private var shouldStopWatching: Bool = false
+    private var shouldStopWatching: Bool = true
 
     var urlInfo: [Int32: URL] = [:]
 
@@ -59,11 +59,11 @@ private extension FileSystemWatcher {
         return !shouldStopWatching
     }
 
-    func shouldWatch(_ running: Bool) {
+    func shouldWatch(_ watch: Bool) {
         lock.lock()
         defer { lock.unlock() }
 
-        shouldStopWatching = !running
+        shouldStopWatching = !watch
     }
 
     func watch(urls: [URL], mask: InotifyEventMask, callback: @escaping (InotifyEvent) -> Void) {
@@ -78,25 +78,22 @@ private extension FileSystemWatcher {
 
         urlInfo = _urlInfo
 
-        while isWatching() {
-            if checkEvent(fileDescriptor) {
-                readEvent(fileDescriptor, callback: callback)
-            }
-        }
+        readEvent(fileDescriptor, callback: callback)
     }
 
-    func checkEvent(_ fileDescriptor: Int32) -> Bool {
-        var readSet = fd_set()
-        fdZero(&readSet)
-        fdSet(fileDescriptor, &readSet)
+    // func checkEvent(_ fileDescriptor: Int32) -> Bool {
+    //     var readSet = fd_set()
+    //     fdZero(&readSet)
+    //     fdSet(fileDescriptor, &readSet)
         
-        return select(FD_SETSIZE, &readSet, nil, nil, nil) > 0 ? true : false
-    }
+    //     return select(FD_SETSIZE, &readSet, nil, nil, nil) > 0 ? true : false
+    // }
 
     func readEvent(_ fileDescriptor: Int32, callback: @escaping (InotifyEvent) -> Void) {
-        dispatchQueue.async {
-            let bufferLength: Int = MemoryLayout<inotify_event>.size + Int(NAME_MAX) + 1
-            let buffer = UnsafeMutablePointer<CChar>.allocate(capacity: bufferLength)
+        let bufferLength: Int = MemoryLayout<inotify_event>.size + Int(NAME_MAX) + 1
+        let buffer = UnsafeMutablePointer<CChar>.allocate(capacity: bufferLength)
+
+        while isWatching() {
             var currentIndex: Int = 0
             let readLength = read(fileDescriptor, buffer, bufferLength)
 
@@ -122,6 +119,7 @@ private extension FileSystemWatcher {
                 currentIndex += MemoryLayout<inotify_event>.stride + Int(_event.len)
             }
         }
+            
     }
 }
 #endif
