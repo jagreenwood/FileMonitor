@@ -8,16 +8,15 @@ import CInotify
 #endif
 
 #if os(Linux)
-public class FileSystemWatcher {
-    // inotify_init() initializes a new inotify instance and returns a
-    // file descriptor associated with a new inotify event queue.
-    private let fileDescriptor: Int32
+class FileSystemWatcher {
     private let dispatchQueue: DispatchQueue
-
-    private var watchDescriptor: Int32 = 0
+    private let fileDescriptor: Int32
+    private let lock = NSLock()
     private var shouldStopWatching: Bool = false
 
-    public init() {
+    var urlInfo: [Int32: URL] = [:]
+
+    init() {
         dispatchQueue = DispatchQueue.global(qos: .background)
         fileDescriptor = inotify_init()
         if fileDescriptor < 0 {
@@ -29,62 +28,100 @@ public class FileSystemWatcher {
         stop()
     }
 
-    public func start() {
-        shouldStopWatching = false
+    func start(urls: [URL], mask: InotifyEventMask, callback: @escaping (InotifyEvent) -> Void) {
+        guard !isWatching() else { return }
+        shouldWatch(true)
+
+        dispatchQueue.async { [weak self] in
+            self?.watch(urls: urls, mask: mask, callback: callback)
+        }
+
         dispatchQueue.activate()
     }
 
-    public func stop() {
-        shouldStopWatching = true
+    func stop() {
+        shouldWatch(false)
         dispatchQueue.suspend()
 
-        // ToDo: Does this imply that stop() deinits this watcher (and thus needs to be recreated?)
-        if watchDescriptor > 0 {
-            inotify_rm_watch(Int32(fileDescriptor), Int32(watchDescriptor))
+        for (watchDescriptor, _) in urlInfo {
+            inotify_rm_watch(fileDescriptor, watchDescriptor)
         }
 
         close(fileDescriptor)
     }
+}
 
-    @discardableResult
-    public func watch(path: String, for mask: InotifyEventMask, thenInvoke callback: @escaping (InotifyEvent) -> Void) -> Int32 {
-        watchDescriptor = inotify_add_watch(fileDescriptor, path, mask.rawValue)
+private extension FileSystemWatcher {
+    func isWatching() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
 
-        dispatchQueue.async { [self] in
-            let bufferLength: Int = MemoryLayout<inotify_event>.size + Int(NAME_MAX) + 1
-            let buffer = UnsafeMutablePointer<CChar>.allocate(capacity: bufferLength)
+        return !shouldStopWatching
+    }
 
-            while !self.shouldStopWatching {
-                var currentIndex: Int = 0
-                let readLength = read(fileDescriptor, buffer, bufferLength)
+    func shouldWatch(_ running: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
 
-                while currentIndex < readLength {
-                    let event = withUnsafePointer(to: &buffer[currentIndex]) {
-                        $0.withMemoryRebound(to: inotify_event.self, capacity: 1) {
-                            $0.pointee
-                        }
-                    }
+        shouldStopWatching = !running
+    }
 
-                    if event.len > 0 {
-                        let inotifyEvent = InotifyEvent(
-                                watchDescriptor: Int(event.wd),
-                                mask: event.mask,
-                                cookie: event.cookie,
-                                length: event.len,
-                                name: String(cString: buffer + currentIndex + MemoryLayout<inotify_event>.size)
-                        )
+    func watch(urls: [URL], mask: InotifyEventMask, callback: @escaping (InotifyEvent) -> Void) {
+        var _urlInfo: [Int32: URL] = [:]
+        for url in urls where url.isDirectory {
+            let watchDescriptor = inotify_add_watch(fileDescriptor, url.path, mask.rawValue)
 
-                        self.dispatchQueue.async() {
-                            callback(inotifyEvent)
-                        }
-                    }
-
-                    currentIndex += MemoryLayout<inotify_event>.stride + Int(event.len)
-                }
+            if watchDescriptor > 0 {
+                _urlInfo[watchDescriptor] = url
             }
         }
 
-        return watchDescriptor
+        urlInfo = _urlInfo
+
+        while isWatching() {
+            if checkEvent(fileDescriptor) {
+                readEvent(fileDescriptor, callback: callback)
+            }
+        }
+    }
+
+    func checkEvent(_ fileDescriptor: Int32) -> Bool {
+        var readSet = fd_set()
+        fdZero(&readSet)
+        fdSet(fileDescriptor, &readSet)
+        
+        return select(FD_SETSIZE, &readSet, nil, nil, nil) > 0 ? true : false
+    }
+
+    func readEvent(_ fileDescriptor: Int32, callback: @escaping (InotifyEvent) -> Void) {
+        dispatchQueue.async {
+            let bufferLength: Int = MemoryLayout<inotify_event>.size + Int(NAME_MAX) + 1
+            let buffer = UnsafeMutablePointer<CChar>.allocate(capacity: bufferLength)
+            var currentIndex: Int = 0
+            let readLength = read(fileDescriptor, buffer, bufferLength)
+
+            while currentIndex < readLength {
+                let _event = withUnsafePointer(to: &buffer[currentIndex]) {
+                    $0.withMemoryRebound(to: inotify_event.self, capacity: 1) {
+                        $0.pointee
+                    }
+                }
+
+                if _event.len > 0 {
+                    let inotifyEvent = InotifyEvent(
+                            watchDescriptor: Int(_event.wd),
+                            mask: _event.mask,
+                            cookie: _event.cookie,
+                            length: _event.len,
+                            name: String(cString: buffer + currentIndex + MemoryLayout<inotify_event>.size)
+                    )
+
+                    callback(inotifyEvent)
+                }
+
+                currentIndex += MemoryLayout<inotify_event>.stride + Int(_event.len)
+            }
+        }
     }
 }
 #endif
