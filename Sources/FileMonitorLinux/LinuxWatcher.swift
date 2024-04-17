@@ -28,12 +28,6 @@ public struct LinuxWatcher: WatcherProtocol {
         self.directories = directories
     }
 
-    /// Initializes a new watcher for the given directory.
-    /// - Parameter directory: The directory to observe.
-    public init(directory: URL) {
-        self.init(directories: [directory])
-    }
-
     /// Starts observing the file changes.
     public func observe() throws {
         fsWatcher.start(urls: directories, mask: InotifyEventMask.inAllEvents) { event in

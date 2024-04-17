@@ -32,8 +32,15 @@ public struct FileMonitor: WatcherDelegate {
 
     @discardableResult
     public init(directory url: URL, delegate externDelegate: FileDidChangeDelegate? = nil) throws {
-        if url.isDirectory == false {
-            throw FileMonitorErrors.not_a_directory(url: url)
+        try self.init(directories: [url], delegate: externDelegate)
+    }
+
+    public init(directories: [URL], delegate externDelegate: FileDidChangeDelegate? = nil) throws {
+        // check if all directories are valid
+        for url in directories {
+            if url.isDirectory == false {
+                throw FileMonitorErrors.not_a_directory(url: url)
+            }
         }
 
         // extern delegate
@@ -42,9 +49,9 @@ public struct FileMonitor: WatcherDelegate {
         }
 
         #if os(Linux)
-            watcher = LinuxWatcher(directory: url)
+            watcher = LinuxWatcher(directories: directories)
         #elseif os(macOS)
-            watcher = try MacosWatcher(directory: url)
+            watcher = try MacosWatcher(directories: directories)
         #else
             throw FileMonitorErrors.unsupported_os()
         #endif

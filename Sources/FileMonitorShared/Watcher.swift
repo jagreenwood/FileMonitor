@@ -12,17 +12,12 @@ public protocol WatcherDelegate {
 public protocol WatcherProtocol {
     var delegate: WatcherDelegate? { set get }
 
-    init(directory: URL) throws
+    init(directories: [URL]) throws
     func observe() throws
     func stop()
 }
 
 public extension WatcherProtocol {
-    @available(*, deprecated, message: "user static WatcherProtocol.getCurrentFiles(in:)")
-    func getCurrentFiles(in directory: URL) throws -> [URL] {
-        try Self.contentsOfDirectory(directory)
-    }
-
     static func getCurrentFiles(in urls: [URL]) throws -> [URL] {
         try urls.reduce(into: []) { current, next in
             if next.isDirectory {
