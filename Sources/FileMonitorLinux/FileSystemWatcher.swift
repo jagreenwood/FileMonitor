@@ -32,11 +32,21 @@ class FileSystemWatcher {
         guard !isWatching() else { return }
         shouldWatch(true)
 
-        dispatchQueue.async { [weak self] in
-            self?.watch(urls: urls, mask: mask, callback: callback)
+        var _urlInfo: [Int32: URL] = [:]
+        for url in urls where url.isDirectory {
+            let watchDescriptor = inotify_add_watch(fileDescriptor, url.path, mask.rawValue)
+
+            if watchDescriptor > 0 {
+                _urlInfo[watchDescriptor] = url
+            }
         }
 
-        dispatchQueue.activate()
+        urlInfo = _urlInfo
+
+        dispatchQueue.async { [weak self] in
+            guard let self else { return }
+            self.watch(self.fileDescriptor, callback: callback)
+        }
     }
 
     func stop() {
@@ -66,30 +76,7 @@ private extension FileSystemWatcher {
         shouldStopWatching = !watch
     }
 
-    func watch(urls: [URL], mask: InotifyEventMask, callback: @escaping (InotifyEvent) -> Void) {
-        var _urlInfo: [Int32: URL] = [:]
-        for url in urls where url.isDirectory {
-            let watchDescriptor = inotify_add_watch(fileDescriptor, url.path, mask.rawValue)
-
-            if watchDescriptor > 0 {
-                _urlInfo[watchDescriptor] = url
-            }
-        }
-
-        urlInfo = _urlInfo
-
-        readEvent(fileDescriptor, callback: callback)
-    }
-
-    // func checkEvent(_ fileDescriptor: Int32) -> Bool {
-    //     var readSet = fd_set()
-    //     fdZero(&readSet)
-    //     fdSet(fileDescriptor, &readSet)
-        
-    //     return select(FD_SETSIZE, &readSet, nil, nil, nil) > 0 ? true : false
-    // }
-
-    func readEvent(_ fileDescriptor: Int32, callback: @escaping (InotifyEvent) -> Void) {
+    func watch(_ fileDescriptor: Int32, callback: @escaping (InotifyEvent) -> Void) {
         let bufferLength: Int = MemoryLayout<inotify_event>.size + Int(NAME_MAX) + 1
         let buffer = UnsafeMutablePointer<CChar>.allocate(capacity: bufferLength)
 
@@ -112,7 +99,7 @@ private extension FileSystemWatcher {
                             length: _event.len,
                             name: String(cString: buffer + currentIndex + MemoryLayout<inotify_event>.size)
                     )
-
+                    
                     callback(inotifyEvent)
                 }
 
